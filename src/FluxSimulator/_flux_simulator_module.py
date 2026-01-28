@@ -72,7 +72,7 @@ class FluxSimulationConfig:
         self.well_mixed_species_defaults["O2"] = 0.21
         self.well_mixed_species_defaults["N2"] = 0.78
 
-        self.LUT_wide_nls_pert_default = [0,1,10,25,50,100]
+        self.LUT_wide_nls_pert_default = [0,1,10,100,1000]
 
         # set default paths
         self.catalog_version = catalog_version
