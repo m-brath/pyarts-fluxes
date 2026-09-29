@@ -2333,6 +2333,141 @@ class FluxSimulator(FluxSimulationConfig):
 
         return results
 
+    def radiance_simulator_batch(
+        self,
+        atmospheres,
+        surface_tempratures,
+        surface_altitudes,
+        surface_reflectivities,
+        geographical_positions,
+        sun_positions,
+        N_za=36,
+        N_aa=1,
+        start_index=0,
+        end_index=-1,
+        **kwargs,
+    ):
+        """Calculate spectral radiances for a batch of atmospheres.
+
+        The angular grid is shared by every profile in the batch. Radiance
+        arrays are returned as frequency x pressure x zenith angle x azimuth
+        angle, with the scalar Stokes component selected.
+        """
+        self.ws.IndexCreate("sun_index")
+        self.ws.sun_index = 0 if len(self.get_sun()) else -999
+
+        self.ws.batch_atm_fields_compact = atmospheres
+        self.ws.ArrayOfMatrixCreate("array_of_z_surface")
+        self.ws.array_of_z_surface = [
+            np.array([[surface_altitude]]) for surface_altitude in surface_altitudes
+        ]
+        self.ws.VectorCreate("vector_of_T_surface")
+        self.ws.vector_of_T_surface = surface_tempratures
+        self.ws.MatrixCreate("matrix_of_Lat")
+        self.ws.matrix_of_Lat = np.array(
+            [[geo_pos[0]] for geo_pos in geographical_positions]
+        )
+        self.ws.MatrixCreate("matrix_of_Lon")
+        self.ws.matrix_of_Lon = np.array(
+            [[geo_pos[1]] for geo_pos in geographical_positions]
+        )
+        self.ws.ArrayOfVectorCreate("array_of_surface_scalar_reflectivity")
+        self.ws.array_of_surface_scalar_reflectivity = surface_reflectivities
+        self.ws.ArrayOfStringSet(self.ws.surface_props_names, ["Skin temperature"])
+
+        self.ws.ArrayOfVectorCreate("array_of_sun_positions")
+        self.ws.ArrayOfIndexCreate("ArrayOfSuns_Do")
+        array_of_suns_do = []
+        array_of_sun_positions = []
+        for sun_position in sun_positions:
+            if len(sun_position):
+                array_of_suns_do.append(1)
+                array_of_sun_positions.append(sun_position)
+            else:
+                array_of_suns_do.append(0)
+                array_of_sun_positions.append(np.array([0, 0, 0]))
+        self.ws.array_of_sun_positions = array_of_sun_positions
+        self.ws.ArrayOfSuns_Do = array_of_suns_do
+
+        self.get_lookuptableBatch(atmospheres, **kwargs)
+        self.ws.propmat_clearsky_agendaAuto(use_abs_lookup=1)
+        if self.gas_scattering:
+            self.ws.gas_scattering_do = 1
+        else:
+            self.ws.gas_scatteringOff()
+
+        self.ws.IndexCreate("EmissionIndex")
+        self.ws.IndexCreate("NstreamIndex")
+        self.ws.StringCreate("Text")
+        self.ws.EmissionIndex = int(self.emission)
+        self.ws.NstreamIndex = int(N_za // 2) * 2
+        self.ws.DOAngularGridsSet(N_za_grid=N_za, N_aa_grid=N_aa)
+
+        self.ws.IndexSet(self.ws.ybatch_start, start_index)
+        if end_index == -1:
+            len_of_output = len(atmospheres) - start_index
+        else:
+            len_of_output = end_index - start_index
+        self.ws.IndexSet(self.ws.ybatch_n, len_of_output)
+
+        disort_aux_flag = bool(len(self.ws.disort_aux_vars.value))
+        aux_vars_names = [
+            str(aux_var).replace(" ", "_") for aux_var in self.ws.disort_aux_vars.value
+        ]
+        results = {
+            "array_of_spectral_radiance_clearsky": [None] * len_of_output,
+            "array_of_pressure": [None] * len_of_output,
+            "array_of_altitude": [None] * len_of_output,
+            "array_of_latitude": [None] * len_of_output,
+            "array_of_longitude": [None] * len_of_output,
+            "array_of_index": [None] * len_of_output,
+            "zenith_angle": deepcopy(self.ws.za_grid.value[:]),
+            "azimuth_angle": deepcopy(self.ws.aa_grid.value[:]),
+            "f_grid": deepcopy(self.ws.f_grid.value[:]),
+        }
+        if self.allsky:
+            results["array_of_spectral_radiance_allsky"] = [None] * len_of_output
+        for aux_var_name in aux_vars_names:
+            results[f"array_of_{aux_var_name}_clearsky"] = [None] * len_of_output
+            if self.allsky:
+                results[f"array_of_{aux_var_name}_allsky"] = [None] * len_of_output
+
+        if self.allsky:
+            self.ws.scat_dataCalc(interp_order=1)
+            self.ws.Delete(self.ws.scat_data_raw)
+            self.ws.scat_dataCheck(check_type="all")
+            self.ws.dobatch_calc_agenda = fsa.dobatch_calc_agenda_allsky_radiance(self.ws)
+            self.ws.DOBatchCalc(robust=1)
+            allsky = self.ws.dobatch_cloudbox_field.value
+            for i in range(len_of_output):
+                results["array_of_spectral_radiance_allsky"][i] = np.array(allsky[i])[:, :, 0, 0, :, :, 0].copy()
+            if disort_aux_flag:
+                for i in range(len_of_output):
+                    for j, aux_var_name in enumerate(aux_vars_names):
+                        results[f"array_of_{aux_var_name}_allsky"][i] = self.ws.dobatch_disort_aux.value[i][j][:, :].copy()
+        else:
+            self.ws.scat_species = []
+            self.ws.scat_data_checked = 1
+            self.ws.Touch(self.ws.scat_data)
+
+        self.ws.dobatch_calc_agenda = fsa.dobatch_calc_agenda_clearsky_radiance(self.ws)
+        self.ws.DOBatchCalc(robust=1)
+        clearsky = self.ws.dobatch_cloudbox_field.value
+        for i in range(len_of_output):
+            profile = atmospheres[i + start_index]
+            results["array_of_spectral_radiance_clearsky"][i] = np.array(clearsky[i])[:, :, 0, 0, :, :, 0].copy()
+            results["array_of_pressure"][i] = profile.grids[1].value[:].copy()
+            results["array_of_altitude"][i] = profile.data[1, :, 0, 0].copy()
+            results["array_of_latitude"][i] = self.ws.matrix_of_Lat.value[i + start_index, 0]
+            results["array_of_longitude"][i] = self.ws.matrix_of_Lon.value[i + start_index, 0]
+            results["array_of_index"][i] = i + start_index
+        if disort_aux_flag:
+            for i in range(len_of_output):
+                for j, aux_var_name in enumerate(aux_vars_names):
+                    results[f"array_of_{aux_var_name}_clearsky"][i] = self.ws.dobatch_disort_aux.value[i][j][:, :].copy()
+
+        return results
+
     def calc_optical_thickness(
         self,
         atm,
