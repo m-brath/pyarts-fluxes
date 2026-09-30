@@ -926,6 +926,7 @@ def dobatch_calc_agenda_clearsky_radiance(ws):
         emission=ws.EmissionIndex,
     )
 
+    ws.Copy(ws.spectral_radiance_field, ws.cloudbox_field)
     # reset not needed quantities to save memory
     # ws.Tensor7SetConstant(ws.spectral_radiance_field, 0, 0, 0, 0, 0, 0, 0, 0.0)
     ws.Tensor5SetConstant(ws.spectral_irradiance_field, 0, 0, 0, 0, 0, 0.0)
