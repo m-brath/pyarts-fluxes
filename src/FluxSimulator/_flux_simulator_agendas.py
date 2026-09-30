@@ -876,6 +876,12 @@ def dobatch_calc_agenda_allsky_radiance(ws):
         emission=ws.EmissionIndex,
     )
 
+    # reset not needed quantities to save memory
+    ws.Tensor7SetConstant(ws.spectral_radiance_field, 0, 0, 0, 0, 0, 0, 0, 0.0)
+    ws.Tensor5SetConstant(ws.spectral_irradiance_field, 0, 0, 0, 0, 0, 0.0)
+    ws.Tensor5SetConstant(ws.radiance_field, 0, 0, 0, 0, 0, 0.0)
+    ws.Tensor4SetConstant(ws.irradiance_field, 0, 0, 0, 0, 0.0)
+
 
 @arts_agenda
 def dobatch_calc_agenda_clearsky_radiance(ws):
@@ -919,6 +925,12 @@ def dobatch_calc_agenda_clearsky_radiance(ws):
         Npfct=-1,
         emission=ws.EmissionIndex,
     )
+
+    # reset not needed quantities to save memory
+    # ws.Tensor7SetConstant(ws.spectral_radiance_field, 0, 0, 0, 0, 0, 0, 0, 0.0)
+    ws.Tensor5SetConstant(ws.spectral_irradiance_field, 0, 0, 0, 0, 0, 0.0)
+    ws.Tensor5SetConstant(ws.radiance_field, 0, 0, 0, 0, 0, 0.0)
+    ws.Tensor4SetConstant(ws.irradiance_field, 0, 0, 0, 0, 0.0)
 
 # =============================================================================
 # aux functions

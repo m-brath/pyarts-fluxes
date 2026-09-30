@@ -370,6 +370,38 @@ class FluxSimulator(FluxSimulationConfig):
             print("Setting suns off!")
             self.ws.sunsOff()
 
+    def _ensure_sun_defined(self, sun_positions):
+        """
+        Ensure the ARTS workspace contains a registered sun source if the
+        batch of sun_positions requests solar radiation.
+
+        The batch agendas (dobatch_calc_agenda_*) position the sun per
+        profile via sunsChangeGeometry(index=ws.sun_index, ...). If no sun
+        source exists in the workspace while a sun is requested, ARTS
+        operates on the empty suns list and segfaults inside the parallel
+        DISORT. This method registers the default sun (single blackbody or
+        the configured solar spectrum) from the first requested sun
+        position so that the per-profile geometry changes have a valid
+        index 0. If no sun is requested anywhere in the batch, nothing is
+        done.
+
+        Parameters
+        ----------
+        sun_positions : list
+            List of sun position triples (distance, latitude, longitude) for
+            each batch profile. Empty entries mean no sun for that profile.
+
+        Returns
+        -------
+        None
+        """
+        if len(self.get_sun()) > 0:
+            return
+        for sun_pos in sun_positions:
+            if len(sun_pos) > 0:
+                self.set_sun(sun_pos)
+                return
+
     def get_sun(self):
         """
         Returns the sun from the ARTS WS.
@@ -802,10 +834,15 @@ class FluxSimulator(FluxSimulationConfig):
             ]
         ):
             version='4.0'
-        self.ws.ReadXML(
-            self.ws.predefined_model_data, f"model/mt_ckd_{version}/H2O.xml"
-        )
+        else:
+            version=None
+
+        if version is not None:                
+            self.ws.ReadXML(
+                self.ws.predefined_model_data, f"model/mt_ckd_{version}/H2O.xml"
+            )
                
+
 
     def get_lookuptableWide(
         self,
@@ -1179,6 +1216,7 @@ class FluxSimulator(FluxSimulationConfig):
         fmin=0,
         fmax=np.inf,
         recalc=False,
+        **kwargs
     ):
         """
         This function calculates the LUT using the batch setup.
@@ -1938,7 +1976,12 @@ class FluxSimulator(FluxSimulationConfig):
         # =============================================================================
 
         # set sun
-        # self.set_sun()
+        # The batch agendas only change the sun geometry per profile via
+        # sunsChangeGeometry(index=ws.sun_index). If the workspace does not
+        # contain a registered sun source but the batch requests one, this
+        # runs on an empty suns list and makes ARTS seg-fault. Register the
+        # default sun from the first requested sun position in that case.
+        self._ensure_sun_defined(sun_positions)
         self.ws.IndexCreate("sun_index")
         self.ws.sun_index = 0
         if len(self.get_sun()) == 0:
@@ -2353,8 +2396,13 @@ class FluxSimulator(FluxSimulationConfig):
         arrays are returned as frequency x pressure x zenith angle x azimuth
         angle, with the scalar Stokes component selected.
         """
+        # set sun (see _ensure_sun_defined: the batch agenda changes the sun
+        # geometry via sunsChangeGeometry, which needs a registered sun)
+        self._ensure_sun_defined(sun_positions)
         self.ws.IndexCreate("sun_index")
-        self.ws.sun_index = 0 if len(self.get_sun()) else -999
+        self.ws.sun_index = 0
+        if len(self.get_sun()) == 0:
+            self.ws.sun_index = -999
 
         self.ws.batch_atm_fields_compact = atmospheres
         self.ws.ArrayOfMatrixCreate("array_of_z_surface")
@@ -2396,9 +2444,14 @@ class FluxSimulator(FluxSimulationConfig):
         else:
             self.ws.gas_scatteringOff()
 
+        self.ws.NumericCreate("DummyVariable")
         self.ws.IndexCreate("EmissionIndex")
         self.ws.IndexCreate("NstreamIndex")
         self.ws.StringCreate("Text")
+        self.ws.NumericCreate("sun_dist")
+        self.ws.NumericCreate("sun_lat")
+        self.ws.NumericCreate("sun_lon")
+        self.ws.VectorCreate("sun_pos")
         self.ws.EmissionIndex = int(self.emission)
         self.ws.NstreamIndex = int(N_za // 2) * 2
         self.ws.DOAngularGridsSet(N_za_grid=N_za, N_aa_grid=N_aa)
